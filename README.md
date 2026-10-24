@@ -1,36 +1,23 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Bitcoin Fraud Detection
 
-## Getting Started
+A hackathon prototype combining an Elliptic Bitcoin transaction notebook with a Next.js graph dashboard. The current dashboard serves a bundled graph fixture; the notebook is exploratory and is not a production scoring service.
 
-First, run the development server:
+## Run the dashboard
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000/graph` for the graph view. `GET /api/network` serves the bundled fixture and supports `nodeTypes`, `maxNodes` (1–100000), and `includeMetadata=false` query parameters. The fixture and its risk labels are demonstrations, not a live or validated fraud feed.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Notebook
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Open `bitcoin-fraud-detection.ipynb` with Jupyter and provide the Elliptic dataset under `fraud-detection-dataset/`. The notebook currently includes exploratory model training and synthetic analytics; its reported metrics should not be treated as production or out-of-sample performance. See [the audit and upgrade plan](docs/PRODUCTION_AUDIT.md) before extending its results.
 
-## Learn More
+## Current limitations
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- No live ingestion, scoring API, model artifact management, or alert lifecycle.
+- The dashboard graph is a bundled fixture; dashboard summaries include demo data.
+- Notebook validation splits and feature preparation do not provide a trustworthy temporal evaluation.
+- There is no automated test suite, container setup, or production observability.
