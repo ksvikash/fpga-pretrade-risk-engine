@@ -6,13 +6,13 @@ OBJ_DIR := build/obj_dir
 BIN := $(OBJ_DIR)/Vrisk_accelerator
 TRACE ?= risk_accelerator.vcd
 
-.PHONY: all run clean lint
+.PHONY: all run clean lint synth
 all: $(BIN)
 
 $(BIN): $(RTL) $(TB)
 	mkdir -p build
 	$(VERILATOR) --cc --exe --build --trace --top-module risk_accelerator \
-		-Wall -Wno-fatal --Mdir $(OBJ_DIR) -CFLAGS "-std=c++17 -O2" \
+		-Wall -Wno-fatal -Wno-WIDTHEXPAND --Mdir $(OBJ_DIR) -CFLAGS "-std=c++17 -O2" \
 		$(RTL) $(TB)
 
 run: $(BIN)
