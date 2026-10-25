@@ -1,57 +1,46 @@
-import { NextResponse } from 'next/server';
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { NextResponse } from "next/server";
 
-const getNetworkStats = () => {
-  const sampleData = {
-    nodeCount: 203769, 
-    edgeCount: 234355, 
-    nodeTypes: {
-      'merchant': 282,
-      'user': 203487,
-    },
-    avgConnections: 3.6,
-    lastUpdated: new Date().toISOString(),
-    density: 0.0000113,
-    mostConnectedNode: {
-      id: 'merchant-1',
-      label: 'Amazon Store',
-      connections: 6,
-    },
-    clusters: 2,
-    isolatedNodes: 0,
-    fraudStats: {
-      totalTransactions: 234355,
-      fraudulentTransactions: 15,
-      fraudRate: 0.33, // 33% fraud rate
-      highRiskMerchants: 2,
-      suspiciousUsers: 4,
-    },
-    categories: {
-      'Merchants': 10,
-      'Users': 15,
-      'Normal Transactions': 30,
-      'Fraudulent Transactions': 15,
-    }
-  };
+type Node = { id: string; type?: string; data?: { isFraud?: boolean; risk_level?: string } };
+type Edge = { isFraud?: boolean; data?: { risk_flag?: string } };
+type Fixture = { nodes: Node[]; edges: Edge[] };
 
-  return sampleData;
-};
+let fixturePromise: Promise<Fixture> | undefined;
+
+function loadFixture() {
+  fixturePromise ??= readFile(join(process.cwd(), "public", "graph.json"), "utf8")
+    .then((raw) => JSON.parse(raw) as Fixture)
+    .catch((error: unknown) => {
+      fixturePromise = undefined;
+      throw error;
+    });
+  return fixturePromise;
+}
 
 export async function GET() {
   try {
-    // Simulate some processing time
-    await new Promise(resolve => setTimeout(resolve, 200));
-
-    const stats = getNetworkStats();
-
-    return NextResponse.json(stats);
+    const { nodes, edges } = await loadFixture();
+    const nodeTypes = nodes.reduce<Record<string, number>>((counts, node) => {
+      const type = node.type ?? "unknown";
+      counts[type] = (counts[type] ?? 0) + 1;
+      return counts;
+    }, {});
+    const riskyNodes = nodes.filter((node) => node.data?.isFraud || node.data?.risk_level === "High").length;
+    const riskyEdges = edges.filter((edge) => edge.isFraud || edge.data?.risk_flag === "High").length;
+    return NextResponse.json({
+      source: "bundled-demo-fixture",
+      nodeCount: nodes.length,
+      edgeCount: edges.length,
+      nodeTypes,
+      avgConnections: nodes.length ? (2 * edges.length) / nodes.length : 0,
+      riskyNodeCount: riskyNodes,
+      riskyEdgeCount: riskyEdges,
+      riskRate: edges.length ? riskyEdges / edges.length : 0,
+      lastUpdated: new Date().toISOString(),
+    });
   } catch (error) {
-    console.error('Error fetching network stats:', error);
-    return NextResponse.json(
-      {
-        error: 'Failed to fetch network statistics',
-        message: error instanceof Error ? error.message : 'Unknown error',
-      },
-      { status: 500 }
-    );
+    console.error("Failed to calculate bundled network stats", error);
+    return NextResponse.json({ error: "Network statistics are unavailable" }, { status: 500 });
   }
 }

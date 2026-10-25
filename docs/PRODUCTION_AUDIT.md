@@ -50,6 +50,11 @@ infra/                    Dockerfiles, compose, dashboards, deployment config
 
 ## Phase 3 — First applied refactor
 
-- Implemented `GET /api/network` using the existing bundled fixture, with cached file loading, query validation, node-type and node-count filtering, and edge pruning so the returned graph is internally consistent. This gives the existing UI a real route while explicitly marking the response as demo data.
-- Replaced the starter README with accurate run instructions and prototype limitations.
-- Remaining high-priority follow-up: remove synthetic/random claims from the notebook and UI, then extract the temporal evaluation pipeline before quoting any model metrics.
+- Implemented `GET /api/network` using the existing bundled fixture, with cached file loading, query validation, node-type and node-count filtering, and edge pruning.
+- Added an async replay worker that reservoir-samples the model's held-out temporal split, reports latency/throughput and labeled confusion metrics, and writes bounded recent status snapshots for the dashboard.
+- Added validation-only review-capacity threshold selection, a frozen threshold evaluation on the later test partition, and metrics at the independent agent threshold of 0.85.
+- Migrated new model artifacts to native XGBoost JSON members plus a JSON manifest. Legacy joblib artifacts remain loadable during transition.
+- Replaced fabricated graph counts and random fraud percentages in the active dashboard with actual fixture counts and a live FastAPI dashboard feed. Added Python tests and Docker Compose definitions.
+- Latest full-data run: validation PR AUC 0.934, test PR AUC 0.556, test ROC AUC 0.855. At the validation-selected 1% review threshold (0.999912), test alert rate fell to 0.011% with 1/408 illicit transactions detected. At the separate 0.85 agent threshold, test precision was 94.1%, recall 46.8%, and alert rate 2.30%. This is evidence of substantial temporal drift; the review-capacity threshold should be treated as a starting operating point, not a stable guarantee.
+- A 100-row random sample of held-out test transactions completed through the live API with zero errors, about 7.8 ms mean and 11.1 ms p99 round-trip latency, and four investigator reports. These sample throughput/latency values are local smoke-test results, not production capacity claims.
+- Remaining work: replace simulated wallet and fund-flow tools with approved blockchain data providers, use durable shared storage/broker infrastructure for multi-instance deployments, and investigate temporal drift before claiming deployment-ready detection quality.

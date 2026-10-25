@@ -1,32 +1,76 @@
-# Risk Accelerator RTL
+# AXI-Stream Risk Accelerator RTL
 
-This directory contains a small, synthesizable streaming pre-trade risk block and a Verilator C++ driver. It demonstrates a hardware fast-path interface: one transaction may be accepted on every clock, with a fixed two-register-stage decision latency. It is a policy example and simulation target; it is not connected to the Python scoring service or a physical FPGA in this repository.
+This directory contains a synthesizable two-stage AXI4-Stream pre-trade risk classifier, a synchronous slow-path alert FIFO, and a Verilator C++ driver. The block accepts one transaction per clock when `s_axis_tvalid && s_axis_tready` is true. Risk decisions are emitted on the fast-path outputs and risky transactions are queued for host retrieval.
 
-## Interface and policy
+This is an RTL and simulation prototype. It is not yet connected to the Python scoring service or deployed on a physical FPGA.
 
-`risk_accelerator` accepts an unsigned 32-bit amount in application-defined integer ticks, a 32-bit source wallet identifier, and an unsigned 16-bit count of recent transactions. Parameters set the strict amount and velocity limits and one exact watched wallet ID. The illustrative defaults are `1,000,000`, `100`, and `32'hDEAD_BEEF`.
+## AXI-Stream input
 
-The status vector is a reason bitmap: bit 0 means amount is strictly above its limit, bit 1 means velocity is strictly above its limit, and bit 2 means the source ID exactly matches the watched ID. Bit 3 is reserved and zero. Any set reason bit asserts `risk_flag` when `valid_out` is high. Equality with a numeric limit is allowed. This wallet match is a simple deterministic example, not a cryptographic hash or a production sanctions/watchlist implementation.
+The slave interface uses `s_axis_aclk`, active-low `s_axis_aresetn`, `s_axis_tvalid`, `s_axis_tready`, and an 80-bit `s_axis_tdata`. The packed data layout is:
 
-## Datapath and timing
+| Bits | Field |
+| --- | --- |
+| `[79:48]` | Unsigned amount, in application-defined integer ticks |
+| `[47:32]` | Unsigned velocity count |
+| `[31:0]` | Source wallet ID |
+
+A transfer occurs only on a rising edge where `s_axis_tvalid && s_axis_tready` is high. The source must hold `tvalid` and `tdata` stable until that handshake. `s_axis_tready` is low during reset and whenever the alert FIFO plus in-flight pipeline reservations have no remaining capacity.
+
+## Fast-path policy and latency
+
+The two pipeline stages perform parallel strict threshold comparisons and register the reason-coded result. Parameters set the amount limit, velocity limit, exact watched wallet ID, and FIFO depth. Defaults are `1,000,000`, `100`, `32'hDEAD_BEEF`, and 16 entries. Equality with a numeric limit is allowed.
+
+`valid_out` qualifies `risk_flag` and `status_code`. The status bitmap is bit 0 for amount over limit, bit 1 for velocity over limit, bit 2 for an exact watched-ID match, and bit 3 reserved at zero. Each accepted input produces a decision two rising-edge pipeline stages later. The pipeline can sustain one accepted packet per cycle when the FIFO has capacity. The timestamp counter increments on accepted AXI transfers; its value is captured with the packet at ingress.
+
+## Slow-path alert FIFO
+
+Each `risk_flag` decision automatically enqueues the associated transaction details. The FIFO payload is 148 bits at the default 64-bit timestamp width, packed from MSB to LSB as:
 
 ```text
- amount ───────┐   ┌─ amount > limit ─────┐
- velocity ─────┼──▶│ parallel comparisons ├─▶ Stage 1 reason registers
- wallet ID ────┘   └─ ID == watched ID ───┘             │
-                                                        ▼
-                                  Stage 2 valid/reason registers
-                                                        │
-                                      valid_out, risk_flag, status_code
+{timestamp[63:0], status_code[3:0], velocity[15:0], amount[31:0], wallet_id[31:0]}
 ```
 
-Stage 1 performs three independent combinational comparisons and registers their results with `valid_in`. Stage 2 registers the stage 1 valid and reason bundle. There is no multi-cycle FSM: each valid input is an independent transaction, so the design can accept one item per cycle after reset. `valid_out` is observed two rising-edge pipeline stages after the corresponding input is sampled. Reset is synchronous active-low and clears both valid bits and status registers; data fields need not be reset because validity qualifies them.
+The host-side interface is:
 
-All comparisons use unsigned fixed-width vectors. The input amounts are not scaled internally, avoiding implicit decimal arithmetic and keeping threshold interpretation explicit at the integration boundary.
+- `fifo_empty`: asserted when no alert is queued.
+- `fifo_count`: number of queued alerts, width `$clog2(FIFO_DEPTH+1)`.
+- `fifo_dout`: combinational peek of the head payload; zero when empty.
+- `fifo_read_en`: consume the head on a rising edge when `fifo_read_en && !fifo_empty`.
 
-## Logic and resource estimate
+The FIFO is synchronous to `s_axis_aclk`, matching the stream clock domain. This design does not implement clock-domain crossing; a host in another clock domain needs a proper asynchronous FIFO wrapper. Reads from an empty FIFO are ignored.
 
-There are no inferred memories, multipliers, dividers, or variable-latency control states. The sequential logic is two pipeline stages; the combinational logic is three magnitude/equality comparisons plus a small OR reduction. A rough RTL-derived estimate is approximately 12 state bits (1 + 3 in stage 1; 1 + 4 in stage 2), plus any tool-specific reset/enable implementation overhead. A 32-bit magnitude compare and a 16-bit magnitude compare are typically mapped to carry-chain/comparator structures on FPGA or standard-cell comparator logic on ASIC; the 32-bit equality compare maps to XNOR and reduction logic. Expect on the order of tens of LUTs on a common FPGA, but actual LUT/FF use and timing depend on the target family, synthesis constraints, and whether comparison logic is optimized. No post-synthesis area, timing, power, or clock-frequency claim is made here.
+To prevent alert loss, the accelerator reserves one potential FIFO slot for every valid transaction in either pipeline stage. This deliberately assumes every in-flight packet could trigger a risk alert. Consequently, `s_axis_tready` may deassert before the physical FIFO reaches its full count, while reserved decisions are still in flight. Once the FIFO is full and the pipeline drains, the input remains backpressured until the host reads an entry. The design does not silently overwrite alerts.
+
+## Datapath and FIFO block diagram
+
+```text
+ AXI4-Stream slave
+ {amount, velocity, wallet_id}
+         │ handshake
+         ▼
+ ┌──────────────────────────┐
+ │ Stage 1: parallel checks │  capture ingress timestamp
+ └─────────────┬────────────┘
+               ▼
+ ┌──────────────────────────┐
+ │ Stage 2: registered      │── valid_out / risk_flag / status_code
+ │ decision and payload     │
+ └─────────────┬────────────┘
+               │ risk_flag
+               ▼
+       ┌───────────────┐        host read_en / dout / empty / count
+       │ Alert FIFO    │──────────────────────────────────────────▶
+       │ parameterized │
+       └───────────────┘
+```
+
+The sequential logic is two datapath stages, a timestamp counter, FIFO storage, and FIFO pointers/count. The combinational logic is the amount and velocity magnitude comparisons, wallet equality comparison, status reduction, ready-capacity calculation, and FIFO head selection. There is no multi-cycle FSM, multiplier, divider, or inferred algorithmic memory beyond the alert FIFO.
+
+## Resource estimate
+
+Resource use depends on synthesis target and optimization. The two pipeline stages hold approximately `2 * (1 valid + 4 status + 32 amount + 16 velocity + 32 wallet + 64 timestamp) = 298` bits, plus a 64-bit timestamp counter, FIFO pointers/count, and the FIFO payload storage (`148 * FIFO_DEPTH` bits; 2,368 bits at depth 16). The original design's 12-bit estimate no longer applies after registering the full transaction details and timestamp.
+
+The comparison logic consists of 32-bit and 16-bit unsigned magnitude comparators plus a 32-bit equality comparator. An FPGA will generally map magnitude comparisons into carry-chain/comparator logic and the equality check into XNOR/reduction logic. A depth-16 implementation has approximately 2.4 kbits of FIFO storage and may map to distributed RAM or registers depending on the FPGA and coding/synthesis settings. No post-synthesis LUT/FF/BRAM, timing, power, or clock-frequency result is claimed; run the target vendor synthesis flow to obtain those values.
 
 ## Build and run
 
@@ -37,18 +81,16 @@ cd hardware
 make run
 ```
 
-The executable prints a PASS/FAIL line for ordinary, boundary, over-limit, watched-wallet, simultaneous-trigger, invalid, and recovery cases. A non-zero exit status indicates a mismatch. The default trace is `hardware/risk_accelerator.vcd`; override it with `make run TRACE=build/session.vcd`. `make lint` runs Verilator lint, and `make clean` removes generated build and trace artifacts.
+The harness checks ordinary and boundary traffic, over-limit and watched-wallet decisions, status reasons, FIFO payload contents and timestamps, full-FIFO backpressure, host draining, and resumed traffic after a read. A mismatch returns a non-zero exit status. The default trace is `hardware/risk_accelerator.vcd`; override it with `make run TRACE=build/session.vcd`. `make lint` runs Verilator lint, and `make clean` removes build and trace artifacts.
 
-## Waveform inspection in Surfer
-
-Open the generated VCD in Surfer:
+## Surfer waveform inspection
 
 ```bash
 surfer risk_accelerator.vcd
 ```
 
-Add `clk`, `rst_n`, `valid_in`, inputs, `valid_out`, `risk_flag`, and `status_code` to the waveform view. Compare each accepted input with the output two rising edges later. The testbench writes VCD using Verilator's tracing interface; no proprietary simulator is required.
+Inspect `s_axis_tvalid`, `s_axis_tready`, `s_axis_tdata`, `valid_out`, `risk_flag`, `status_code`, `fifo_count`, `fifo_empty`, `fifo_read_en`, and `fifo_dout`. Confirm that source transfers occur only on valid/ready handshakes, decisions follow the two-stage pipeline, FIFO count tracks enqueues and reads, and backpressure holds while capacity is reserved or exhausted. The harness writes VCD using Verilator tracing; no proprietary simulator is required.
 
 ## Verification scope
 
-The C++ testbench checks representative policy cases and the pipeline's valid/status alignment while producing a trace. It is a directed simulation harness, not formal verification, randomized coverage closure, CDC analysis, or a substitute for synthesis and timing analysis. If changing the pipeline depth, policy, or interface, update the expected vectors and the stated latency together.
+This is directed cycle-based simulation, not formal verification, randomized coverage closure, CDC analysis, or a replacement for FPGA synthesis and timing analysis. The RTL and testbench assume a single synchronous clock and the default FIFO depth of 16. If changing packet widths, FIFO payload layout, policy parameters, depth, or pipeline stages, update the harness and this interface contract together.

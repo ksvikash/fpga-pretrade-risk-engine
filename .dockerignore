@@ -1,0 +1,8 @@
+.git
+.next
+node_modules
+artifacts
+fraud-detection-dataset
+__pycache__
+*.py[cod]
+.env*

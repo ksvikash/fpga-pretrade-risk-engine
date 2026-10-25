@@ -1,0 +1,61 @@
+services:
+  scoring:
+    build:
+      context: .
+      dockerfile: service/Dockerfile
+    environment:
+      MODEL_PATH: /app/artifacts/fraud_ensemble.json
+      STREAM_METRICS_PATH: /app/artifacts/streaming_metrics.json
+      INVESTIGATIONS_PATH: /app/artifacts/investigations.jsonl
+      SCENARIO_REPORT_PATH: /app/artifacts/investigator_scenario.json
+    volumes:
+      - ./artifacts:/app/artifacts:ro
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    environment:
+      FRAUD_API_URL: http://scoring:8000
+    depends_on:
+      scoring:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+
+  replay-worker:
+    build:
+      context: .
+      dockerfile: service/Dockerfile
+    profiles: ["replay"]
+    command:
+      - python
+      - -m
+      - streaming.worker
+      - --mode
+      - replay
+      - --split
+      - test
+      - --count
+      - "100"
+      - --workers
+      - "8"
+      - --rate
+      - "20"
+      - --data-dir
+      - /data
+    environment:
+      MODEL_PATH: /app/artifacts/fraud_ensemble.json
+    depends_on:
+      scoring:
+        condition: service_healthy
+    volumes:
+      - ./artifacts:/app/artifacts
+      - ./fraud-detection-dataset:/data:ro

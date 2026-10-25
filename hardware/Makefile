@@ -18,6 +18,12 @@ $(BIN): $(RTL) $(TB)
 run: $(BIN)
 	./$(BIN) $(TRACE)
 
+# --- Yosys Synthesis & Resource Reporting ---
+synth:
+	@mkdir -p build
+	yosys -p "read_verilog -sv rtl/risk_accelerator.sv; synth -top risk_accelerator; tee -o build/synth_report.txt stat"
+	@echo "Synthesis complete. Report saved to hardware/build/synth_report.txt"
+
 lint:
 	$(VERILATOR) --lint-only --top-module risk_accelerator -Wall -Wno-fatal $(RTL)
 
