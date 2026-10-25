@@ -19,6 +19,10 @@
 
 # production
 /build
+/artifacts/
+/fraud-detection-dataset/
+__pycache__/
+*.py[cod]
 
 # misc
 .DS_Store
@@ -39,3 +43,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Hardware build artifacts and traces
+hardware/build/
+hardware/*.vcd
+hardware/obj_dir/
+*.vcd
