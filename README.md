@@ -150,6 +150,43 @@ python -m unittest discover -s tests
 
 The hardware simulation and synthesis are run separately by the commands above and by the configured hardware GitHub Actions workflow.
 
+## Performance, Synthesis & Verification Results
+
+The hardware accelerator (`fpga-pretrade-risk-engine`) is verified using cycle-accurate Verilator simulation waveforms and synthesized via Yosys to evaluate hardware complexity and deterministic execution latency.
+
+### 1. Hardware Latency & Pipeline Performance
+* **Execution Latency:** **2 clock cycles** fixed pipeline latency from AXI-Stream input (`s_axis_tdata`) to threshold evaluation (`s2_status`) and alert assertion (`risk_flag`).
+* **Throughput:** Supports continuous back-to-back single-cycle packet streaming over the AMBA AXI-Stream interface without handshake bubbles.
+
+### 2. Yosys Post-Synthesis Resource Utilization
+Synthesized via Yosys targeting standard cell logic mapping:
+
+| Resource Metric | Count / Bits | Description |
+| :--- | :--- | :--- |
+| **Total Cells** | **5,465** | Total mapped logic and sequential cells |
+| **Flip-Flops (DFFs)** | **2,352** (`$_DFFE_PP_`) | Pipeline registers, state machines, and FIFO storage elements |
+| **Multiplexers** | **2,209** (`$_MUX_`) | Datapath routing and threshold routing logic |
+| **Logic Gates** | **~904** | Combined AND, OR, NOT, XOR, and XNOR gates (`$_AND_`, `$_OR_`, etc.) |
+| **Total Wires / Bits** | **2,556 / 5,634** | Internal structural netlist connectivity |
+
+---
+
+### 3. Simulation Waveform Verification (Surfer Traces)
+
+The simulation waveforms below illustrate cycle-accurate execution across the AXI-Stream interface, the 2-stage pipeline evaluation, and the slow-path alert FIFO queue management:
+
+#### A. AXI-Stream Ingestion & Handshake
+*Shows active clock (`s_axis_aclk`), reset release (`s_axis_aresetn`), ready/valid handshakes, and incoming 80-bit packet streams (`s_axis_tdata`).*
+![AXI Stream Ingestion](docs/images/axi_stream.png)
+
+#### B. 2-Cycle Fixed Pipeline Evaluation
+*Demonstrates stage 1 decoding (`s1_valid`, `s1_amount`), stage 2 status flags (`s2_status`), and real-time risk assertion (`risk_flag`).*
+![Pipeline Evaluation](docs/images/pipeline_eval.png)
+
+#### C. Slow-Path Alert FIFO Draining
+*Captures circular buffer pointers (`wr_ptr`, `rd_ptr`), FIFO occupancy (`fifo_count`), read enables (`fifo_read_en`), and payload extraction (`fifo_dout`) for software bridge consumption.*
+![FIFO Draining](docs/images/fifo_drain.png)
+
 ## Dataset and evaluation notes
 
 The raw dataset is provided by Elliptic and available through Kaggle under the license shown on the dataset page. Cite Elliptic and the associated research publication when using the data. The model's temporal test metrics are offline historical results and do not establish future detection performance. Threshold ties can push the realized validation alert fraction above the requested review budget.
