@@ -49,4 +49,5 @@ hardware/build/
 hardware/*.vcd
 hardware/alerts.jsonl
 hardware/obj_dir/
+hardware/hardware-synthesis-reports/
 *.vcd
