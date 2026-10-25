@@ -2,7 +2,7 @@
 
 **FPGA Pretrade Risk Engine — Low-Latency Dual-Plane Crypto Risk Gateway** is a portfolio engineering prototype that pairs a deterministic RTL pre-trade fast path with a Python scoring, replay, and investigation slow path. It demonstrates how a compact hardware policy engine can raise immediate reason-coded alerts while a service tier adds richer model and analyst context.
 
-> **Project scope:** ApexGate is not a production trading system. The RTL is verified in Verilator and synthesized with generic Yosys flows, but is not deployed to an FPGA or connected to a hardware transport. The investigation providers are deterministic mocks, not a live LLM or external blockchain/compliance service. The graph dashboard includes a bundled demo fixture. Measure and validate all behavior on the intended deployment target before relying on it operationally.
+> **Project scope:** This Engine is not a production trading system. The RTL is verified in Verilator and synthesized with generic Yosys flows, but is not deployed to an FPGA or connected to a hardware transport. The investigation providers are deterministic mocks, not a live LLM or external blockchain/compliance service. The graph dashboard includes a bundled demo fixture. Measure and validate all behavior on the intended deployment target before relying on it operationally.
 
 ## Dual-plane architecture
 
@@ -61,7 +61,7 @@ hardware/
   tb/tb_risk_accelerator.cpp    Verilator driver and JSONL alert exporter
   Makefile                      run, lint, synth, and clean targets
 service/
-  app/main.py                   ApexGate FastAPI scoring and alert endpoints
+  app/main.py                   FPGA Pretrade Risk Engine FastAPI scoring and alert endpoints
   app/schemas.py                API request/response contracts
   hardware_bridge.py            async FIFO export to service relay
 streaming/                      bounded async scoring/replay worker
