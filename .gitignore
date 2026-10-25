@@ -47,5 +47,6 @@ next-env.d.ts
 # Hardware build artifacts and traces
 hardware/build/
 hardware/*.vcd
+hardware/alerts.jsonl
 hardware/obj_dir/
 *.vcd

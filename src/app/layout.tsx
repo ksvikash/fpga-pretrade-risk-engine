@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Bitcoin Fraud Monitor",
-  description: "Temporal transaction risk scoring and investigation dashboard",
+  title: "ApexGate Risk Monitor",
+  description: "ApexGate dual-plane crypto risk gateway monitoring dashboard",
 };
 
 export default function RootLayout({

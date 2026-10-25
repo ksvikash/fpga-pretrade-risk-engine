@@ -20,6 +20,19 @@ class ScoreRequest(BaseModel):
         return value
 
 
+class HardwareAlertRequest(BaseModel):
+    """Decoded 148-bit slow-path FIFO record from the RTL fast path."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    alert_id: str = Field(min_length=1, max_length=128)
+    timestamp: int = Field(ge=0, le=(1 << 64) - 1)
+    status_code: int = Field(ge=1, le=7)
+    velocity: int = Field(ge=0, le=(1 << 16) - 1)
+    amount: int = Field(ge=0, le=(1 << 32) - 1)
+    wallet_id: int = Field(ge=0, le=(1 << 32) - 1)
+
+
 class ScoreResponse(BaseModel):
     transaction_id: str
     risk_score: float = Field(ge=0, le=1)

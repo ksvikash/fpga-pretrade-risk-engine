@@ -13,8 +13,9 @@ import numpy as np
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from agent.investigator import investigate_hardware_alert
 from model.artifacts import load_model_bundle
-from .schemas import ScoreRequest, ScoreResponse
+from .schemas import HardwareAlertRequest, ScoreRequest, ScoreResponse
 
 
 class JsonFormatter(logging.Formatter):
@@ -34,9 +35,9 @@ class JsonFormatter(logging.Formatter):
 handler = logging.StreamHandler()
 handler.setFormatter(JsonFormatter())
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), handlers=[handler], force=True)
-logger = logging.getLogger("fraud.scoring")
+logger = logging.getLogger("apexgate.scoring")
 
-app = FastAPI(title="Transaction Risk Scoring", version="0.1.0")
+app = FastAPI(title="ApexGate Risk Gateway API", version="0.2.0")
 MODEL_PATH = Path(os.getenv("MODEL_PATH", "artifacts/fraud_ensemble.json"))
 STREAM_METRICS_PATH = Path(os.getenv("STREAM_METRICS_PATH", "artifacts/streaming_metrics.json"))
 INVESTIGATIONS_PATH = Path(os.getenv("INVESTIGATIONS_PATH", "artifacts/investigations.jsonl"))
@@ -162,12 +163,13 @@ async def dashboard():
 @app.get("/")
 async def root():
     return {
-        "service": "Transaction Risk Scoring",
+        "service": "ApexGate Risk Gateway API",
         "status": "ok",
         "docs": "/docs",
         "health": "/health",
         "schema": "/schema",
         "score_endpoint": "POST /score",
+        "hardware_alert_endpoint": "POST /hardware-alerts",
     }
 
 
@@ -205,3 +207,32 @@ def score(request: ScoreRequest) -> ScoreResponse:
         is_alert=float(np.mean(probabilities)) >= decision_threshold,
         scoring_ms=scoring_ms,
     )
+
+
+@app.post("/hardware-alerts")
+def hardware_alert(request: HardwareAlertRequest) -> dict[str, Any]:
+    """Accept a decoded RTL FIFO alert and attach investigation context."""
+    if INVESTIGATIONS_PATH.is_file():
+        try:
+            with INVESTIGATIONS_PATH.open(encoding="utf-8") as source:
+                for line in source:
+                    if not line.strip():
+                        continue
+                    existing = json.loads(line)
+                    if existing.get("alert_id") == request.alert_id:
+                        return {"accepted": True, "deduplicated": True, "investigation": existing}
+        except (OSError, json.JSONDecodeError):
+            logger.exception("hardware_alert_deduplication_scan_failed")
+            raise HTTPException(status_code=500, detail="Could not inspect investigation log")
+
+    investigation = investigate_hardware_alert(request.model_dump())
+    try:
+        INVESTIGATIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with INVESTIGATIONS_PATH.open("a", encoding="utf-8") as destination:
+            destination.write(json.dumps(investigation, separators=(",", ":")) + "\n")
+    except OSError as exc:
+        logger.exception("hardware_alert_persist_failed", extra={"context": {"alert_id": request.alert_id}})
+        raise HTTPException(status_code=500, detail="Could not persist hardware alert") from exc
+
+    logger.info("hardware_alert_investigated", extra={"context": {"alert_id": request.alert_id}})
+    return {"accepted": True, "deduplicated": False, "investigation": investigation}

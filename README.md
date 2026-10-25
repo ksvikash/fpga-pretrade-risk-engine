@@ -1,42 +1,85 @@
-# Dual-Plane Crypto Fraud Detection & Pre-Trade Risk Gateway
+# ApexGate
 
-A portfolio prototype for transaction risk screening across two latency domains. The **fast path** is a synthesizable SystemVerilog threshold accelerator with a cycle-accurate Verilator harness. The **slow path** is a Python/FastAPI scoring and investigation stack, paired with temporal XGBoost training, asynchronous replay, and a Next.js monitoring UI.
+**ApexGate — Low-Latency Dual-Plane Crypto Risk Gateway** is a portfolio engineering prototype that pairs a deterministic RTL pre-trade fast path with a Python scoring, replay, and investigation slow path. It demonstrates how a compact hardware policy engine can raise immediate reason-coded alerts while a service tier adds richer model and analyst context.
 
-> This repository is an engineering prototype. The RTL and Python service are separate demonstrations today: there is no FPGA deployment, hardware/software bridge, live blockchain feed, or production trading integration. The bundled graph is demo data. Evaluate and measure each component on its target environment before making operational latency or fraud-performance claims.
+> **Project scope:** ApexGate is not a production trading system. The RTL is verified in Verilator and synthesized with generic Yosys flows, but is not deployed to an FPGA or connected to a hardware transport. The investigation providers are deterministic mocks, not a live LLM or external blockchain/compliance service. The graph dashboard includes a bundled demo fixture. Measure and validate all behavior on the intended deployment target before relying on it operationally.
 
-## Architecture
+## Dual-plane architecture
 
 ```text
- Transaction stream
-        │
-        ├── Fast path: SystemVerilog risk accelerator
-        │     amount / velocity / watched-ID checks
-        │     2 pipeline stages · 1 transaction per cycle
-        │     Verilator C++ simulation + VCD for Surfer
-        │
-        └── Slow path: asynchronous replay → FastAPI /score
-              temporal XGBoost ensemble → threshold-gated investigator
-              JSONL investigation reports → Next.js live monitor
+                        ┌──────────────────────────┐
+ Transaction stream ──▶│ Fast path: SystemVerilog │
+                        │ AXI-Stream, 2-stage checks│
+                        └────────────┬─────────────┘
+                                     │ reason-coded risk alert
+                                     ▼
+                        ┌──────────────────────────┐
+                        │ Synchronous alert FIFO  │
+                        └────────────┬─────────────┘
+                                     │ host drain / simulation JSONL
+                                     ▼
+                        ┌──────────────────────────┐
+                        │ Python async bridge     │──▶ FastAPI /hardware-alerts
+                        └──────────────────────────┘                 │
+                                                                      ▼
+ ┌────────────────────┐    ┌────────────────────┐    ┌─────────────────────┐
+ │ bounded async replay│──▶│ FastAPI /score      │──▶│ temporal XGBoost     │
+ └────────────────────┘    └────────────────────┘    └─────────────────────┘
+                                                                      │
+                                                       investigator mock tools
+                                                                      │
+                                                        JSONL reports / dashboard
 ```
 
-The RTL accepts an integer amount, source wallet identifier, and recent-window velocity counter. Three parallel comparisons produce a reason bitmap and a risk decision. Its fixed two-stage latency and sustained throughput make it a compact fast-path design exercise. See [`hardware/README.md`](hardware/README.md) for the interface contract, timing, resource estimate, build steps, and waveform workflow.
+### Fast path: hardware policy
 
-The Python pipeline trains an ensemble on chronologically separated Elliptic timesteps, selects the operating threshold using validation review capacity, then freezes that threshold for test reporting. The async worker performs bounded concurrent scoring and reports throughput and latency percentiles. A threshold-gated investigator runs deterministic mock wallet/fund-flow tools and writes JSONL reports. FastAPI serves scoring and dashboard endpoints; the web UI includes live monitoring and a separate bundled graph fixture.
+The SystemVerilog accelerator accepts an 80-bit AXI-Stream packet `{amount[31:0], velocity[15:0], wallet_id[31:0]}`. Parallel amount, velocity, and watched-ID checks feed a two-stage pipeline with a fixed decision latency and one-packet-per-cycle throughput while capacity is available. Risky transactions are automatically queued in a parameterized synchronous FIFO with the original packet fields, reason bitmap, and ingress timestamp. FIFO slot reservation backpressures the AXI source before alerts can be lost.
+
+The Verilator C++ harness checks decisions, alert contents, timestamp alignment, FIFO fill/drain, and backpressure, and emits `hardware/alerts.jsonl`. The Makefile also provides lint and generic Yosys synthesis targets. GitHub Actions is configured to run lint, simulation, synthesis, and archive outputs on hardware workflow changes. A configured workflow is not a claim that a particular remote CI run is currently green.
+
+### Slow path: scoring and investigation
+
+FastAPI serves `/score`, `/schema`, `/dashboard`, and `/hardware-alerts`. The model pipeline is an XGBoost ensemble trained on time-ordered partitions: early timesteps train, middle timesteps select the validation operating threshold, and later timesteps provide held-out reporting. The bounded asyncio worker can replay held-out transactions through the scorer and report throughput plus p50/p99 request latency.
+
+The hardware bridge asynchronously reads the Verilator JSONL export (or a raw packed FIFO word) and posts decoded policy alerts to `/hardware-alerts`. That endpoint records the RTL reason bits and attaches deterministic mock wallet-history and fund-flow context. It does not pass the 80-bit hardware packet to `/score`: that endpoint requires the complete model feature schema. Standard model investigations are also deterministic mock tools today; a live LLM and external evidence providers are not implemented.
 
 ## Engineering highlights
 
-- **RTL fast path:** synthesizable SystemVerilog, explicit vector widths, synchronous active-low reset, registered comparison results, and reason-coded output.
-- **Cycle-aligned verification:** C++ stimulus checks normal, boundary, over-limit, surge, simultaneous-trigger, invalid, and recovery cases; VCD traces can be inspected in Surfer.
-- **Temporal model evaluation:** training, validation, and test partitions are separated by sorted time steps; validation chooses the review-capacity threshold and test metrics use that frozen value.
-- **Bounded async replay:** configurable workers/rate with held-out replay metrics and p50/p99 round-trip measurements.
-- **Agentic investigation path:** threshold-gated structured mock tools with reproducible scenario checks and persisted reports.
-- **Full-stack view:** FastAPI scoring and dashboard API, Next.js UI, and Docker Compose services.
+- Two-stage, cycle-aligned AXI-Stream risk datapath with explicit packet and FIFO layouts.
+- FIFO capacity reservation and source backpressure to avoid dropping high-risk alerts.
+- Directed Verilator tests for policy boundaries, FIFO payloads, timestamp capture, full conditions, draining, and resumed traffic.
+- Generic Yosys synthesis/report target and a GitHub Actions hardware workflow.
+- Leakage-aware temporal model splits and validation-only threshold selection.
+- Async replay with bounded concurrency and service latency/throughput reporting.
+- Idempotent hardware-alert ingestion with structured investigation persistence.
 
-## Quick start
+## Repository layout
 
-### 1. Get the Elliptic data
+```text
+hardware/
+  rtl/risk_accelerator.sv       AXI-Stream risk pipeline and slow-path alert FIFO
+  tb/tb_risk_accelerator.cpp    Verilator driver and JSONL alert exporter
+  Makefile                      run, lint, synth, and clean targets
+service/
+  app/main.py                   ApexGate FastAPI scoring and alert endpoints
+  app/schemas.py                API request/response contracts
+  hardware_bridge.py            async FIFO export to service relay
+streaming/                      bounded async scoring/replay worker
+model/                           temporal XGBoost training and artifact loading
+agent/                           deterministic mock investigation workflows
+src/                             Next.js monitoring dashboard
+tests/                           Python service/model/artifact tests
+.github/workflows/
+  hardware_ci.yml                Verilator and Yosys CI workflow
+fraud-detection-dataset/          local-only raw Elliptic CSVs (gitignored)
+artifacts/                        local model, metrics, and investigation output
+```
 
-The raw dataset is **not tracked in Git** because it is large and has separate licensing terms. Download the original release from [Elliptic's Kaggle dataset page](https://www.kaggle.com/datasets/ellipticco/elliptic-data-set). Review and follow the dataset's current **CC BY-NC-ND 4.0** terms; do not redistribute the files or treat this as permission for commercial use. The Kaggle page provides the three CSV files used by this project. Place them directly in `fraud-detection-dataset/`:
+## Reproduce the project
+
+### 1. Download the dataset
+
+The raw Elliptic dataset is **excluded from Git** because of its size and separate license terms. Download the original data from [the Elliptic dataset page on Kaggle](https://www.kaggle.com/ellipticco/elliptic-data-set). Kaggle currently lists the dataset under **CC BY-NC-ND 4.0**; review the current terms and attribution requirements before use. This project does not redistribute the data. The dataset describes three CSV files; extract them into `fraud-detection-dataset/`:
 
 ```text
 fraud-detection-dataset/
@@ -45,11 +88,11 @@ fraud-detection-dataset/
 └── elliptic_txs_edgelist.csv
 ```
 
-The project consumes features and classes for training/replay; the edge list is included for completeness. The directory is gitignored. Follow Kaggle's download flow and terms rather than relying on an unverified mirror.
+The training/replay code reads the feature and class files; the edge list is retained for dataset completeness. The directory is gitignored.
 
-### 2. Train the temporal model
+### 2. Train the temporal XGBoost model
 
-From the repository root, install Python dependencies and train a native XGBoost JSON ensemble:
+From the repository root:
 
 ```bash
 python -m pip install -r model/requirements.txt -r service/requirements.txt
@@ -59,64 +102,65 @@ python model/train.py \
   --review-capacity 0.01
 ```
 
-Training also writes `artifacts/fraud_ensemble.metrics.json`. Model artifacts and reports are generated locally and ignored by Git.
+Training writes the native model bundle and metrics under `artifacts/`. The threshold is selected on validation scores; the later test partition uses that frozen threshold. The ensemble spread is not a calibrated confidence interval.
 
-### 3. Start the app and replay
+### 3. Run the API and web dashboard with Docker Compose
 
-Build and start the API and web UI after training:
+With the model artifact available:
 
 ```bash
 docker compose up --build scoring web
 ```
 
-Open `http://localhost:3000` (graph view: `/graph`) and the scoring API at `http://localhost:8000`. Run a held-out replay in another terminal:
+Open the dashboard at `http://localhost:3000` and the API docs at `http://localhost:8000/docs`. The scoring service needs the generated artifact. To run the held-out replay, open another terminal:
 
 ```bash
 docker compose --profile replay run --rm replay-worker
 ```
 
-The compose replay service expects the dataset directory and trained `artifacts/` to be present. For a local API without Docker, run `uvicorn service.app.main:app --host 0.0.0.0 --port 8000`; install `streaming/requirements.txt` and run `python -m streaming.worker --mode replay --split test --count 100 --workers 8 --rate 20` from the repository root.
+For local development, install `streaming/requirements.txt` and run `uvicorn service.app.main:app --host 0.0.0.0 --port 8000`. Then run the worker with `python -m streaming.worker --mode replay --split test --count 100 --workers 8 --rate 20`.
 
-### 4. Build and simulate the RTL
+### 4. Simulate, synthesize, and relay the hardware alerts
 
-With Verilator, GNU Make, and a C++17 compiler installed:
+Requirements: Verilator with VCD tracing, Yosys, GNU Make, and a C++17 compiler. From the repository root:
 
 ```bash
+make -C hardware lint
 make -C hardware run
+make -C hardware synth
 ```
 
-This builds and runs the C++ testbench, exits nonzero on a mismatch, and writes `hardware/risk_accelerator.vcd`. To view it, run `surfer hardware/risk_accelerator.vcd`. `make -C hardware lint` runs Verilator lint.
+`make run` creates `hardware/risk_accelerator.vcd` and `hardware/alerts.jsonl`. The generic Yosys cell/resource report is written to `hardware/build/synth_report.txt`; this is not a vendor FPGA place-and-route or timing result. View the waveform with `surfer hardware/risk_accelerator.vcd`.
 
-### 5. Run project tests
+With the FastAPI service running, relay the simulated FIFO alerts and attach the deterministic investigation context:
+
+```bash
+python -m service.hardware_bridge \
+  --input hardware/alerts.jsonl \
+  --api-url http://127.0.0.1:8000
+```
+
+Use `--dry-run` to decode and print events without calling the API. The bridge also accepts JSONL records with a raw `fifo_dout` hexadecimal/integer value using the default 148-bit FIFO layout. This bridge is a simulation/software integration path; it is not a physical FPGA driver.
+
+### 5. Run the Python suite
 
 ```bash
 python -m unittest discover -s tests
 ```
 
-The RTL directed checks are run separately with `make -C hardware run`.
+The hardware simulation and synthesis are run separately by the commands above and by the configured hardware GitHub Actions workflow.
 
-## Repository map
+## Dataset and evaluation notes
 
-```text
-hardware/                 RTL, Verilator testbench, Makefile, hardware guide
-service/app/              FastAPI scoring and dashboard contracts
-model/train.py            Temporal split, ensemble training, threshold selection
-streaming/worker.py       Bounded asynchronous synthetic and held-out replay
-agent/investigator.py     Threshold-gated structured investigation mock
-src/                      Next.js dashboard and graph experience
-tests/                    Python service/model/artifact tests
-fraud-detection-dataset/  Local-only raw Elliptic files (gitignored)
-artifacts/                Local-only models, metrics, traces, and reports
-```
+The raw dataset is provided by Elliptic and available through Kaggle under the license shown on the dataset page. Cite Elliptic and the associated research publication when using the data. The model's temporal test metrics are offline historical results and do not establish future detection performance. Threshold ties can push the realized validation alert fraction above the requested review budget.
 
-## Current limits and interpretation
+## Known limits
 
-- The RTL wallet rule is an exact ID match with an illustrative default, not a cryptographic hash lookup or maintained watchlist.
-- The RTL is not integrated with the API or deployed to FPGA hardware; FPGA-emulated describes the intended fast-path concept, while the current verification target is Verilator simulation.
-- The investigator's tools are deterministic mocks rather than external blockchain providers.
-- The graph page uses a bundled labeled demo fixture; its counts are not a live feed.
-- Ensemble member spread is not a calibrated confidence interval. Threshold ties can exceed the requested alert capacity. Reported test metrics are offline dataset results, not guarantees of future fraud detection.
-- Local files back metrics and investigations. Multi-instance deployment would need shared durable storage and a broker.
-- Measure p50/p95/p99 under target load and on target hardware before setting an SLO. No 15 ms service guarantee is claimed.
-
-For the existing notebook audit and recommendations, see [`docs/PRODUCTION_AUDIT.md`](docs/PRODUCTION_AUDIT.md).
+- RTL wallet detection is an exact illustrative 32-bit ID match, not a maintained sanctions/watchlist lookup or cryptographic address hash.
+- The current FIFO shares the AXI clock; crossing into another clock domain requires an asynchronous FIFO or another CDC-safe interface.
+- Hardware transfers from a physical FPGA are not implemented. The bridge currently consumes a simulator JSONL export or packed payload records.
+- The hardware alert endpoint preserves RTL policy reasons; it does not create a model score from the reduced hardware packet.
+- Wallet/fund-flow tools are deterministic mocks. No LLM provider, blockchain API, or compliance decision system is connected.
+- The graph page uses a bundled labeled demo fixture, not a live network feed.
+- Service metrics and investigations use local files; multi-instance deployment needs shared durable storage and a broker.
+- Report target-specific p50/p95/p99 latency and synthesis/timing results before making service-level or hardware performance claims.

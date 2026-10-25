@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <deque>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -38,8 +39,8 @@ struct Alert {
 
 class Bench {
   public:
-    Bench(Vrisk_accelerator& dut, VerilatedVcdC& trace)
-        : dut_(dut), trace_(trace) {}
+    Bench(Vrisk_accelerator& dut, VerilatedVcdC& trace, std::ofstream& alert_export)
+        : dut_(dut), trace_(trace), alert_export_(alert_export) {}
 
     bool cycle(bool valid, const Packet* packet, bool read = false) {
         dut_.s_axis_aclk = 0;
@@ -124,6 +125,14 @@ class Bench {
         } else {
             std::cout << "PASS FIFO " << expected.name << " timestamp=" << timestamp << '\n';
         }
+        if (match) {
+            alert_export_ << "{\"timestamp\":" << timestamp
+                          << ",\"status_code\":" << static_cast<unsigned>(status)
+                          << ",\"velocity\":" << velocity
+                          << ",\"amount\":" << amount
+                          << ",\"wallet_id\":" << wallet
+                          << "}\n";
+        }
         return match;
     }
 
@@ -151,6 +160,7 @@ class Bench {
 
     Vrisk_accelerator& dut_;
     VerilatedVcdC& trace_;
+    std::ofstream& alert_export_;
     Decision stage1_{};
     std::deque<Alert> alerts_;
     uint64_t next_timestamp_ = 0;
@@ -169,8 +179,14 @@ int main(int argc, char** argv) {
     VerilatedVcdC trace;
     dut.trace(&trace, 99);
     const std::string trace_path = argc > 1 ? argv[1] : "risk_accelerator.vcd";
+    const std::string alert_path = argc > 2 ? argv[2] : "alerts.jsonl";
     trace.open(trace_path.c_str());
-    Bench bench(dut, trace);
+    std::ofstream alert_export(alert_path, std::ios::trunc);
+    if (!alert_export) {
+        std::cerr << "Cannot open alert export: " << alert_path << '\n';
+        return EXIT_FAILURE;
+    }
+    Bench bench(dut, trace, alert_export);
 
     dut.s_axis_aclk = 0;
     dut.s_axis_aresetn = 0;
@@ -255,7 +271,9 @@ int main(int argc, char** argv) {
 
     trace.close();
     dut.final();
+    alert_export.close();
     std::cout << "Trace: " << trace_path << '\n'
+              << "Alert export: " << alert_path << '\n'
               << "Cycles=" << bench.cycles()
               << " backpressure_cycles=" << bench.backpressure_cycles()
               << " failures=" << bench.failures() << '\n';

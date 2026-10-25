@@ -5,6 +5,7 @@ TB := tb/tb_risk_accelerator.cpp
 OBJ_DIR := build/obj_dir
 BIN := $(OBJ_DIR)/Vrisk_accelerator
 TRACE ?= risk_accelerator.vcd
+ALERTS ?= alerts.jsonl
 
 .PHONY: all run clean lint synth
 all: $(BIN)
@@ -16,7 +17,7 @@ $(BIN): $(RTL) $(TB)
 		$(abspath $(RTL)) $(abspath $(TB))
 
 run: $(BIN)
-	./$(BIN) $(TRACE)
+	./$(BIN) $(TRACE) $(ALERTS)
 
 # --- Yosys Synthesis & Resource Reporting ---
 synth:
@@ -28,4 +29,4 @@ lint:
 	$(VERILATOR) --lint-only --top-module risk_accelerator -Wall -Wno-fatal $(abspath $(RTL))
 
 clean:
-	rm -rf build $(TRACE)
+	rm -rf build $(TRACE) $(ALERTS)

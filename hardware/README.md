@@ -1,8 +1,8 @@
-# AXI-Stream Risk Accelerator RTL
+# ApexGate Hardware Fast-Path RTL
 
 This directory contains a synthesizable two-stage AXI4-Stream pre-trade risk classifier, a synchronous slow-path alert FIFO, and a Verilator C++ driver. The block accepts one transaction per clock when `s_axis_tvalid && s_axis_tready` is true. Risk decisions are emitted on the fast-path outputs and risky transactions are queued for host retrieval.
 
-This is an RTL and simulation prototype. It is not yet connected to the Python scoring service or deployed on a physical FPGA.
+This is an RTL and simulation prototype. The testbench alert export can be relayed to the Python investigation endpoint; the RTL is not deployed on a physical FPGA, and there is no hardware transport driver in this repository.
 
 ## AXI-Stream input
 
@@ -68,7 +68,7 @@ The sequential logic is two datapath stages, a timestamp counter, FIFO storage, 
 
 ## Resource estimate
 
-Resource use depends on synthesis target and optimization. The two pipeline stages hold approximately `2 * (1 valid + 4 status + 32 amount + 16 velocity + 32 wallet + 64 timestamp) = 298` bits, plus a 64-bit timestamp counter, FIFO pointers/count, and the FIFO payload storage (`148 * FIFO_DEPTH` bits; 2,368 bits at depth 16). The original design's 12-bit estimate no longer applies after registering the full transaction details and timestamp.
+Resource use depends on synthesis target and optimization. The two pipeline stages hold approximately `2 valid + 3 stage-1 status + 4 stage-2 status + 2 * (32 amount + 16 velocity + 32 wallet + 64 timestamp) = 297` bits, plus a 64-bit timestamp counter, FIFO pointers/count, and the FIFO payload storage (`148 * FIFO_DEPTH` bits; 2,368 bits at depth 16). The original design's 12-bit estimate no longer applies after registering the full transaction details and timestamp.
 
 The comparison logic consists of 32-bit and 16-bit unsigned magnitude comparators plus a 32-bit equality comparator. An FPGA will generally map magnitude comparisons into carry-chain/comparator logic and the equality check into XNOR/reduction logic. A depth-16 implementation has approximately 2.4 kbits of FIFO storage and may map to distributed RAM or registers depending on the FPGA and coding/synthesis settings. No post-synthesis LUT/FF/BRAM, timing, power, or clock-frequency result is claimed; run the target vendor synthesis flow to obtain those values.
 
@@ -81,7 +81,7 @@ cd hardware
 make run
 ```
 
-The harness checks ordinary and boundary traffic, over-limit and watched-wallet decisions, status reasons, FIFO payload contents and timestamps, full-FIFO backpressure, host draining, and resumed traffic after a read. A mismatch returns a non-zero exit status. The default trace is `hardware/risk_accelerator.vcd`; override it with `make run TRACE=build/session.vcd`. `make lint` runs Verilator lint, and `make clean` removes build and trace artifacts.
+The harness checks ordinary and boundary traffic, over-limit and watched-wallet decisions, status reasons, FIFO payload contents and timestamps, full-FIFO backpressure, host draining, and resumed traffic after a read. It exports every drained alert as JSON Lines in `hardware/alerts.jsonl`, which can be consumed from the repository root by `python -m service.hardware_bridge`. A mismatch returns a non-zero exit status. The default trace is `hardware/risk_accelerator.vcd`; override the outputs with `make run TRACE=build/session.vcd ALERTS=build/alerts.jsonl`. `make lint` runs Verilator lint, `make synth` runs generic Yosys synthesis and writes `hardware/build/synth_report.txt`, and `make clean` removes generated build and output files.
 
 ## Surfer waveform inspection
 
@@ -93,4 +93,4 @@ Inspect `s_axis_tvalid`, `s_axis_tready`, `s_axis_tdata`, `valid_out`, `risk_fla
 
 ## Verification scope
 
-This is directed cycle-based simulation, not formal verification, randomized coverage closure, CDC analysis, or a replacement for FPGA synthesis and timing analysis. The RTL and testbench assume a single synchronous clock and the default FIFO depth of 16. If changing packet widths, FIFO payload layout, policy parameters, depth, or pipeline stages, update the harness and this interface contract together.
+This is directed cycle-based simulation, not formal verification, randomized coverage closure, CDC analysis, or a replacement for FPGA synthesis and timing analysis. Yosys' generic synthesis report is not a vendor FPGA implementation result. The RTL and testbench assume a single synchronous clock and the default FIFO depth of 16. If changing packet widths, FIFO payload layout, policy parameters, depth, or pipeline stages, update the harness and this interface contract together.

@@ -1,4 +1,4 @@
-name: Hardware CI (Verilator & Yosys)
+name: ApexGate Hardware CI (Verilator & Yosys)
 
 on:
   push:
@@ -41,3 +41,4 @@ jobs:
           path: |
             hardware/build/synth_report.txt
             hardware/risk_accelerator.vcd
+            hardware/alerts.jsonl

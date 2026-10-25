@@ -1,4 +1,4 @@
-"""Deterministic investigation mock; replace tool bodies with approved data APIs later."""
+"""ApexGate investigator scaffold with deterministic mock evidence providers."""
 
 from __future__ import annotations
 
@@ -119,3 +119,45 @@ def investigate_transaction(tx_data: dict[str, Any]) -> AuditReport | None:
         evidence_sources=["model-score", "simulated-wallet-history", "simulated-fund-flow"],
         generated_at=datetime.now(timezone.utc),
     )
+
+
+def investigate_hardware_alert(alert: dict[str, Any]) -> dict[str, Any]:
+    """Attach deterministic mock context to a hardware policy alert.
+
+    The report preserves the RTL's reason bits as policy evidence and does not
+    invent a model probability or claim a real on-chain investigation.
+    """
+    status_code = int(alert["status_code"])
+    reasons = []
+    if status_code & 0b0001:
+        reasons.append("amount_limit_exceeded")
+    if status_code & 0b0010:
+        reasons.append("velocity_limit_exceeded")
+    if status_code & 0b0100:
+        reasons.append("watched_wallet_match")
+
+    alert_id = str(alert["alert_id"])
+    wallet = f"0x{int(alert['wallet_id']):08x}"
+    history = get_wallet_history(wallet)
+    flow = trace_fund_graph(alert_id)
+    return {
+        "alert_id": alert_id,
+        "transaction_id": alert_id,
+        "source": "apexgate-hardware-fast-path",
+        "timestamp": int(alert["timestamp"]),
+        "amount": int(alert["amount"]),
+        "velocity": int(alert["velocity"]),
+        "wallet_id": int(alert["wallet_id"]),
+        "status_code": status_code,
+        "risk_reasons": reasons,
+        "decision": "escalate_for_human_review",
+        "executive_summary": (
+            f"ApexGate hardware policy raised {', '.join(reasons)} for {alert_id}. "
+            "Deterministic simulated wallet and fund-flow context is attached for analyst review."
+        ),
+        "wallet_history": history.model_dump(mode="json"),
+        "fund_flow_trace": flow.model_dump(mode="json"),
+        "evidence_sources": ["rtl-policy-status", "simulated-wallet-history", "simulated-fund-flow"],
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "disclaimer": "Hardware policy alert with simulated investigation context; not a compliance determination.",
+    }
