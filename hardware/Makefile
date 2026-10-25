@@ -13,7 +13,7 @@ $(BIN): $(RTL) $(TB)
 	mkdir -p build
 	$(VERILATOR) --cc --exe --build --trace --top-module risk_accelerator \
 		-Wall -Wno-fatal -Wno-WIDTHEXPAND --Mdir $(OBJ_DIR) -CFLAGS "-std=c++17 -O2" \
-		$(RTL) $(TB)
+		$(abspath $(RTL)) $(abspath $(TB))
 
 run: $(BIN)
 	./$(BIN) $(TRACE)
@@ -21,11 +21,11 @@ run: $(BIN)
 # --- Yosys Synthesis & Resource Reporting ---
 synth:
 	@mkdir -p build
-	yosys -p "read_verilog -sv rtl/risk_accelerator.sv; synth -top risk_accelerator; tee -o build/synth_report.txt stat"
+	yosys -p "read_verilog -sv $(abspath rtl/risk_accelerator.sv); synth -top risk_accelerator; tee -o build/synth_report.txt stat"
 	@echo "Synthesis complete. Report saved to hardware/build/synth_report.txt"
 
 lint:
-	$(VERILATOR) --lint-only --top-module risk_accelerator -Wall -Wno-fatal $(RTL)
+	$(VERILATOR) --lint-only --top-module risk_accelerator -Wall -Wno-fatal $(abspath $(RTL))
 
 clean:
 	rm -rf build $(TRACE)
